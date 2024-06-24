@@ -3,7 +3,7 @@ package net.minestom.server.command.builder.arguments.number;
 import net.minestom.server.command.CommandSender;
 import net.minestom.server.command.builder.arguments.Argument;
 import net.minestom.server.command.builder.exception.ArgumentSyntaxException;
-import net.minestom.server.utils.binary.BinaryWriter;
+import net.minestom.server.network.NetworkBuffer;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -26,11 +26,11 @@ public class ArgumentNumber<T extends Number> extends Argument<T> {
     protected final String parserName;
     protected final BiFunction<String, Integer, T> radixParser;
     protected final Function<String, T> parser;
-    protected final BiConsumer<BinaryWriter, T> propertiesWriter;
+    protected final BiConsumer<NetworkBuffer, T> propertiesWriter;
     protected final Comparator<T> comparator;
 
     ArgumentNumber(@NotNull String id, String parserName, Function<String, T> parser,
-                   BiFunction<String, Integer, T> radixParser, BiConsumer<BinaryWriter, T> propertiesWriter,
+                   BiFunction<String, Integer, T> radixParser, BiConsumer<NetworkBuffer, T> propertiesWriter,
                    Comparator<T> comparator) {
         super(id);
         this.parserName = parserName;
@@ -72,12 +72,12 @@ public class ArgumentNumber<T extends Number> extends Argument<T> {
 
     @Override
     public byte @Nullable [] nodeProperties() {
-        return BinaryWriter.makeArray(packetWriter -> {
-            packetWriter.writeByte(getNumberProperties());
+        return NetworkBuffer.makeArray(buffer -> {
+            buffer.write(NetworkBuffer.BYTE, getNumberProperties());
             if (this.hasMin())
-                propertiesWriter.accept(packetWriter, getMin());
+                propertiesWriter.accept(buffer, getMin());
             if (this.hasMax())
-                propertiesWriter.accept(packetWriter, getMax());
+                propertiesWriter.accept(buffer, getMax());
         });
     }
 

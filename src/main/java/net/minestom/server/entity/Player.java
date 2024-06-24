@@ -29,9 +29,7 @@ import net.minestom.server.adventure.Localizable;
 import net.minestom.server.adventure.audience.Audiences;
 import net.minestom.server.collision.BoundingBox;
 import net.minestom.server.command.CommandSender;
-import net.minestom.server.coordinate.Point;
-import net.minestom.server.coordinate.Pos;
-import net.minestom.server.coordinate.Vec;
+import net.minestom.server.coordinate.*;
 import net.minestom.server.effects.Effects;
 import net.minestom.server.entity.attribute.Attribute;
 import net.minestom.server.entity.damage.DamageType;
@@ -84,17 +82,15 @@ import net.minestom.server.snapshot.SnapshotImpl;
 import net.minestom.server.snapshot.SnapshotUpdater;
 import net.minestom.server.statistic.PlayerStatistic;
 import net.minestom.server.thread.Acquirable;
+import net.minestom.server.timer.Cooldown;
 import net.minestom.server.timer.Scheduler;
+import net.minestom.server.timer.TimeUnit;
 import net.minestom.server.utils.MathUtils;
-import net.minestom.server.utils.PacketUtils;
+import net.minestom.server.utils.PacketSendingUtils;
+import net.minestom.server.utils.SlotUtils;
 import net.minestom.server.utils.async.AsyncUtils;
 import net.minestom.server.utils.chunk.ChunkUpdateLimitChecker;
-import net.minestom.server.utils.chunk.ChunkUtils;
-import net.minestom.server.utils.function.IntegerBiConsumer;
 import net.minestom.server.utils.identity.NamedAndIdentified;
-import net.minestom.server.utils.inventory.PlayerInventoryUtils;
-import net.minestom.server.utils.time.Cooldown;
-import net.minestom.server.utils.time.TimeUnit;
 import net.minestom.server.utils.validate.Check;
 import net.minestom.server.world.DimensionType;
 import org.jctools.queues.MessagePassingQueue;
@@ -162,11 +158,11 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
     private int maxChunkBatchLead = 1; // Maximum number of batches to send before waiting for a reply
     private int chunkBatchLead = 0; // Number of batches sent without a reply
 
-    final IntegerBiConsumer chunkAdder = (chunkX, chunkZ) -> {
+    final ChunkRangeUtils.ChunkConsumer chunkAdder = (chunkX, chunkZ) -> {
         // Load new chunks
         this.instance.loadOptionalChunk(chunkX, chunkZ).thenAccept(this::sendChunk);
     };
-    final IntegerBiConsumer chunkRemover = (chunkX, chunkZ) -> {
+    final ChunkRangeUtils.ChunkConsumer chunkRemover = (chunkX, chunkZ) -> {
         // Unload old chunks
         sendPacket(new UnloadChunkPacket(chunkX, chunkZ));
         EventDispatcher.call(new PlayerChunkUnloadEvent(this, chunkX, chunkZ));
@@ -196,7 +192,7 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
 
     private long startItemUseTime;
     private long itemUseTime;
-    private Hand itemUseHand;
+    private PlayerHand itemUseHand;
 
     // Game state (https://wiki.vg/Protocol#Change_Game_State)
     private boolean enableRespawnScreen;
@@ -328,7 +324,7 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
         EventDispatcher.call(skinInitEvent);
         this.skin = skinInitEvent.getSkin();
         // FIXME: when using Geyser, this line remove the skin of the client
-        PacketUtils.broadcastPlayPacket(getAddPlayerToList());
+        PacketSendingUtils.broadcastPlayPacket(getAddPlayerToList());
 
         var connectionManager = MinecraftServer.getConnectionManager();
         for (var player : connectionManager.getOnlinePlayers()) {
@@ -354,9 +350,7 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
             sendPacket(recipeManager.getDeclareRecipesPacket());
 
             List<String> recipesIdentifier = new ArrayList<>();
-            for (Recipe recipe : recipeManager.getRecipes()) {
-                if (!recipe.shouldShow(this))
-                    continue;
+            for (Recipe recipe : recipeManager.consumeRecipes(this)) {
                 recipesIdentifier.add(recipe.id());
             }
             if (!recipesIdentifier.isEmpty()) {
@@ -438,11 +432,11 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
         // Eating animation
         if (isUsingItem()) {
             if (itemUseTime > 0 && getCurrentItemUseTime() >= itemUseTime) {
-                triggerStatus((byte) 9); // Mark item use as finished
+                triggerStatus((byte) EntityStatuses.Player.MARK_ITEM_FINISHED);
                 ItemUpdateStateEvent itemUpdateStateEvent = callItemUpdateStateEvent(itemUseHand);
 
                 // Refresh hand
-                final boolean isOffHand = itemUpdateStateEvent.getHand() == Player.Hand.OFF;
+                final boolean isOffHand = itemUpdateStateEvent.getHand() == PlayerHand.OFF;
                 refreshActiveHand(false, isOffHand, false);
 
                 final ItemStack item = itemUpdateStateEvent.getItemStack();
@@ -538,7 +532,7 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
         Pos respawnPosition = respawnEvent.getRespawnPosition();
 
         // The client unloads chunks when respawning, so resend all chunks next to spawn
-        ChunkUtils.forChunksInRange(respawnPosition, settings.getEffectiveViewDistance(), chunkAdder);
+        ChunkRangeUtils.forChunksInRange(respawnPosition, settings.getEffectiveViewDistance(), chunkAdder);
         chunksLoadedByClient = new Vec(respawnPosition.chunkX(), respawnPosition.chunkZ());
         // Client also needs all entities resent to them, since those are unloaded as well
         this.instance.getEntityTracker().nearbyEntitiesByChunkRange(respawnPosition, settings.getEffectiveViewDistance(),
@@ -604,9 +598,9 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
         final int chunkX = position.chunkX();
         final int chunkZ = position.chunkZ();
         // Clear all viewable chunks
-        ChunkUtils.forChunksInRange(chunkX, chunkZ, settings.getEffectiveViewDistance(), chunkRemover);
+        ChunkRangeUtils.forChunksInRange(chunkX, chunkZ, settings.getEffectiveViewDistance(), chunkRemover);
         // Remove from the tab-list
-        PacketUtils.broadcastPlayPacket(getRemovePlayerToList());
+        PacketSendingUtils.broadcastPlayPacket(getRemovePlayerToList());
 
         // Prevent the player from being stuck in loading screen, or just unable to interact with the server
         // This should be considered as a bug, since the player will ultimately time out anyway.
@@ -661,7 +655,7 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
 
         // Ensure that surrounding chunks are loaded
         List<CompletableFuture<Chunk>> futures = new ArrayList<>();
-        ChunkUtils.forChunksInRange(spawnPosition, settings.getEffectiveViewDistance(), (chunkX, chunkZ) -> {
+        ChunkRangeUtils.forChunksInRange(spawnPosition, settings.getEffectiveViewDistance(), (chunkX, chunkZ) -> {
             final CompletableFuture<Chunk> future = instance.loadOptionalChunk(chunkX, chunkZ);
             if (!future.isDone()) futures.add(future);
         });
@@ -734,7 +728,7 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
         if (!firstSpawn && !dimensionChange) {
             // Player instance changed, clear current viewable collections
             if (updateChunks)
-                ChunkUtils.forChunksInRange(spawnPosition, settings.getEffectiveViewDistance(), chunkRemover);
+                ChunkRangeUtils.forChunksInRange(spawnPosition, settings.getEffectiveViewDistance(), chunkRemover);
         }
 
         if (dimensionChange) sendDimension(instance.getDimensionType(), instance.getDimensionName());
@@ -749,7 +743,7 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
             sendPacket(new UpdateViewPositionPacket(chunkX, chunkZ));
 
             // Load the nearby chunks and queue them to be sent to them
-            ChunkUtils.forChunksInRange(spawnPosition, settings.getEffectiveViewDistance(), chunkAdder);
+            ChunkRangeUtils.forChunksInRange(spawnPosition, settings.getEffectiveViewDistance(), chunkAdder);
             sendPendingChunks(); // Send available first chunk immediately to prevent falling through the floor
         }
 
@@ -792,7 +786,7 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
         if (!chunk.isLoaded()) return;
         chunkQueueLock.lock();
         try {
-            chunkQueue.enqueue(ChunkUtils.getChunkIndex(chunk.getChunkX(), chunk.getChunkZ()));
+            chunkQueue.enqueue(CoordConversionUtils.chunkIndex(chunk.getChunkX(), chunk.getChunkZ()));
         } finally {
             chunkQueueLock.unlock();
         }
@@ -812,7 +806,7 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
             sendPacket(new ChunkBatchStartPacket());
             while (!chunkQueue.isEmpty() && pendingChunkCount >= 1f) {
                 long chunkIndex = chunkQueue.dequeueLong();
-                int chunkX = ChunkUtils.getChunkCoordX(chunkIndex), chunkZ = ChunkUtils.getChunkCoordZ(chunkIndex);
+                int chunkX = CoordConversionUtils.chunkIndexToChunkX(chunkIndex), chunkZ = CoordConversionUtils.chunkIndexToChunkZ(chunkIndex);
                 var chunk = instance.getChunk(chunkX, chunkZ);
                 if (chunk == null || !chunk.isLoaded()) continue;
 
@@ -841,47 +835,47 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
 
     @Override
     protected void updatePose() {
-        Pose oldPose = getPose();
-        Pose newPose;
+        EntityPose oldPose = getPose();
+        EntityPose newPose;
 
         // Figure out their expected state
         var meta = getEntityMeta();
         if (meta.isFlyingWithElytra()) {
-            newPose = Pose.FALL_FLYING;
+            newPose = EntityPose.FALL_FLYING;
         } else if (false) { // When should they be sleeping? We don't have any in-bed state...
-            newPose = Pose.SLEEPING;
+            newPose = EntityPose.SLEEPING;
         } else if (meta.isSwimming()) {
-            newPose = Pose.SWIMMING;
+            newPose = EntityPose.SWIMMING;
         } else if (meta instanceof LivingEntityMeta livingMeta && livingMeta.isInRiptideSpinAttack()) {
-            newPose = Pose.SPIN_ATTACK;
+            newPose = EntityPose.SPIN_ATTACK;
         } else if (isSneaking() && !isFlying()) {
-            newPose = Pose.SNEAKING;
+            newPose = EntityPose.SNEAKING;
         } else {
-            newPose = Pose.STANDING;
+            newPose = EntityPose.STANDING;
         }
 
         // Try to put them in their expected state, or the closest if they don't fit.
         if (canFitWithBoundingBox(newPose)) {
             // Use expected state
-        } else if (canFitWithBoundingBox(Pose.SNEAKING)) {
-            newPose = Pose.SNEAKING;
-        } else if (canFitWithBoundingBox(Pose.SWIMMING)) {
-            newPose = Pose.SWIMMING;
+        } else if (canFitWithBoundingBox(EntityPose.SNEAKING)) {
+            newPose = EntityPose.SNEAKING;
+        } else if (canFitWithBoundingBox(EntityPose.SWIMMING)) {
+            newPose = EntityPose.SWIMMING;
         } else {
             // If they can't fit anywhere, just use standing
-            newPose = Pose.STANDING;
+            newPose = EntityPose.STANDING;
         }
 
         if (newPose != oldPose) setPose(newPose);
     }
 
     /**
-     * Returns true if the player can fit at the current position with the given {@link net.minestom.server.entity.Entity.Pose}, false otherwise.
+     * Returns true if the player can fit at the current position with the given {@link net.minestom.server.entity.EntityPose}, false otherwise.
      *
      * @param pose The pose to check
      */
-    private boolean canFitWithBoundingBox(@NotNull Pose pose) {
-        BoundingBox bb = pose == Pose.STANDING ? boundingBox : BoundingBox.fromPose(pose);
+    private boolean canFitWithBoundingBox(@NotNull EntityPose pose) {
+        BoundingBox bb = pose == EntityPose.STANDING ? boundingBox : BoundingBox.fromPose(pose);
         if (bb == null) return false;
 
         var position = getPosition();
@@ -1025,11 +1019,11 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
                 .build();
 
         // Set book in offhand
-        sendPacket(new SetSlotPacket((byte) 0, 0, (short) PlayerInventoryUtils.OFFHAND_SLOT, writtenBook));
+        sendPacket(new SetSlotPacket((byte) 0, 0, (short) SlotUtils.OFFHAND_SLOT, writtenBook));
         // Open the book
-        sendPacket(new OpenBookPacket(Hand.OFF));
+        sendPacket(new OpenBookPacket(PlayerHand.OFF));
         // Restore the item in offhand
-        sendPacket(new SetSlotPacket((byte) 0, 0, (short) PlayerInventoryUtils.OFFHAND_SLOT, getItemInOffHand()));
+        sendPacket(new SetSlotPacket((byte) 0, 0, (short) SlotUtils.OFFHAND_SLOT, getItemInOffHand()));
     }
 
     @Override
@@ -1145,7 +1139,7 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
      *
      * @return the item use hand, null if none
      */
-    public @Nullable Hand getItemUseHand() {
+    public @Nullable PlayerHand getItemUseHand() {
         return itemUseHand;
     }
 
@@ -1187,7 +1181,7 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
      */
     public void setDisplayName(@Nullable Component displayName) {
         this.displayName = displayName;
-        PacketUtils.broadcastPlayPacket(new PlayerInfoUpdatePacket(PlayerInfoUpdatePacket.Action.UPDATE_DISPLAY_NAME, infoEntry()));
+        PacketSendingUtils.broadcastPlayPacket(new PlayerInfoUpdatePacket(PlayerInfoUpdatePacket.Action.UPDATE_DISPLAY_NAME, infoEntry()));
     }
 
     /**
@@ -1229,11 +1223,11 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
 
         {
             // Remove player
-            PacketUtils.broadcastPlayPacket(removePlayerPacket);
+            PacketSendingUtils.broadcastPlayPacket(removePlayerPacket);
             sendPacketToViewers(destroyEntitiesPacket);
 
             // Show player again
-            PacketUtils.broadcastPlayPacket(addPlayerPacket);
+            PacketSendingUtils.broadcastPlayPacket(addPlayerPacket);
             getViewers().forEach(player -> showPlayer(player.getPlayerConnection()));
         }
 
@@ -1413,7 +1407,7 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
      * @param entity the entity to spectate
      */
     public void spectate(@NotNull Entity entity) {
-        sendPacket(new CameraPacket(entity));
+        sendPacket(new CameraPacket(entity.getEntityId()));
     }
 
     /**
@@ -1617,7 +1611,7 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
         // Condition to prevent sending the packets before spawning the player
         if (isActive()) {
             sendPacket(new ChangeGameStatePacket(ChangeGameStatePacket.Reason.CHANGE_GAMEMODE, gameMode.id()));
-            PacketUtils.broadcastPlayPacket(new PlayerInfoUpdatePacket(PlayerInfoUpdatePacket.Action.UPDATE_GAME_MODE, infoEntry()));
+            PacketSendingUtils.broadcastPlayPacket(new PlayerInfoUpdatePacket(PlayerInfoUpdatePacket.Action.UPDATE_GAME_MODE, infoEntry()));
         }
 
         // The client updates their abilities based on the GameMode as follows
@@ -2015,12 +2009,11 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
     public void refreshFlying(boolean flying) {
         //When the player starts or stops flying, their pose needs to change
         if (this.flying != flying) {
-            Pose pose = getPose();
-
-            if (this.isSneaking() && pose == Pose.STANDING) {
-                setPose(Pose.SNEAKING);
-            } else if (pose == Pose.SNEAKING) {
-                setPose(Pose.STANDING);
+            EntityPose pose = getPose();
+            if (this.isSneaking() && pose == EntityPose.STANDING) {
+                setPose(EntityPose.SNEAKING);
+            } else if (pose == EntityPose.SNEAKING) {
+                setPose(EntityPose.STANDING);
             }
         }
 
@@ -2155,7 +2148,7 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
     public void refreshLatency(int latency) {
         this.latency = latency;
         if (getPlayerConnection().getConnectionState() == ConnectionState.PLAY) {
-            PacketUtils.broadcastPlayPacket(new PlayerInfoUpdatePacket(PlayerInfoUpdatePacket.Action.UPDATE_LATENCY, infoEntry()));
+            PacketSendingUtils.broadcastPlayPacket(new PlayerInfoUpdatePacket(PlayerInfoUpdatePacket.Action.UPDATE_LATENCY, infoEntry()));
         }
     }
 
@@ -2204,7 +2197,7 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
         clearItemUse();
     }
 
-    public void refreshItemUse(@Nullable Hand itemUseHand, long itemUseTimeTicks) {
+    public void refreshItemUse(@Nullable PlayerHand itemUseHand, long itemUseTimeTicks) {
         this.itemUseHand = itemUseHand;
         if (itemUseHand != null) {
             this.startItemUseTime = getAliveTicks();
@@ -2224,7 +2217,7 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
      *
      * @return the called {@link ItemUpdateStateEvent},
      */
-    public @NotNull ItemUpdateStateEvent callItemUpdateStateEvent(@NotNull Hand hand) {
+    public @NotNull ItemUpdateStateEvent callItemUpdateStateEvent(@NotNull PlayerHand hand) {
         ItemUpdateStateEvent itemUpdateStateEvent = new ItemUpdateStateEvent(this, hand, getItemInHand(hand));
         EventDispatcher.call(itemUpdateStateEvent);
 
@@ -2406,7 +2399,7 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
             final int newZ = newChunk.getChunkZ();
             final Vec old = chunksLoadedByClient;
             sendPacket(new UpdateViewPositionPacket(newX, newZ));
-            ChunkUtils.forDifferingChunksInRange(newX, newZ, (int) old.x(), (int) old.z(),
+            ChunkRangeUtils.forDifferingChunksInRange(newX, newZ, (int) old.x(), (int) old.z(),
                     settings.getEffectiveViewDistance(), chunkAdder, chunkRemover);
             this.chunksLoadedByClient = new Vec(newX, newZ);
         }
@@ -2419,14 +2412,6 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
     public @NotNull CompletableFuture<Void> teleport(@NotNull Pos position, long @Nullable [] chunks, int flags) {
         chunkUpdateLimitChecker.clearHistory();
         return super.teleport(position, chunks, flags);
-    }
-
-    /**
-     * Represents the main or off hand of the player.
-     */
-    public enum Hand {
-        MAIN,
-        OFF
     }
 
     public enum FacePoint {
@@ -2555,10 +2540,10 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
     }
 
     private int compareChunkDistance(long chunkIndexA, long chunkIndexB) {
-        int chunkAX = ChunkUtils.getChunkCoordX(chunkIndexA);
-        int chunkAZ = ChunkUtils.getChunkCoordZ(chunkIndexA);
-        int chunkBX = ChunkUtils.getChunkCoordX(chunkIndexB);
-        int chunkBZ = ChunkUtils.getChunkCoordZ(chunkIndexB);
+        int chunkAX = CoordConversionUtils.chunkIndexToChunkX(chunkIndexA);
+        int chunkAZ = CoordConversionUtils.chunkIndexToChunkZ(chunkIndexA);
+        int chunkBX = CoordConversionUtils.chunkIndexToChunkX(chunkIndexB);
+        int chunkBZ = CoordConversionUtils.chunkIndexToChunkZ(chunkIndexB);
         int chunkDistanceA = Math.abs(chunkAX - chunksLoadedByClient.blockX()) + Math.abs(chunkAZ - chunksLoadedByClient.blockZ());
         int chunkDistanceB = Math.abs(chunkBX - chunksLoadedByClient.blockX()) + Math.abs(chunkBZ - chunksLoadedByClient.blockZ());
         return Integer.compare(chunkDistanceA, chunkDistanceB);

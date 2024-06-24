@@ -137,7 +137,7 @@ public final class Metadata {
         });
     }
 
-    public static Entry<Entity.Pose> Pose(Entity.@NotNull Pose value) {
+    public static Entry<EntityPose> Pose(@NotNull EntityPose value) {
         return new MetadataImpl.EntryImpl<>(TYPE_POSE, value, NetworkBuffer.POSE);
     }
 
@@ -217,7 +217,8 @@ public final class Metadata {
             permits MetadataImpl.EntryImpl {
         int type();
 
-        @UnknownNullability T value();
+        @UnknownNullability
+        T value();
 
         @ApiStatus.Internal
         static @NotNull Entry<?> read(int type, @NotNull NetworkBuffer reader) {

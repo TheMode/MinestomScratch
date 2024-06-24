@@ -31,10 +31,10 @@ import net.minestom.server.registry.DynamicRegistry;
 import net.minestom.server.scoreboard.Team;
 import net.minestom.server.sound.SoundEvent;
 import net.minestom.server.thread.Acquirable;
+import net.minestom.server.timer.Cooldown;
+import net.minestom.server.timer.TimeUnit;
 import net.minestom.server.utils.NamespaceID;
 import net.minestom.server.utils.block.BlockIterator;
-import net.minestom.server.utils.time.Cooldown;
-import net.minestom.server.utils.time.TimeUnit;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -315,7 +315,7 @@ public class LivingEntity extends Entity implements EquipmentHandler {
     public void kill() {
         refreshIsDead(true); // So the entity isn't killed over and over again
         triggerStatus((byte) 3); // Start death animation status
-        setPose(Pose.DYING);
+        setPose(EntityPose.DYING);
         setHealth(0);
 
         // Reset velocity
@@ -618,7 +618,7 @@ public class LivingEntity extends Entity implements EquipmentHandler {
         if (meta != null) {
             meta.setNotifyAboutChanges(false);
             meta.setHandActive(isHandActive);
-            meta.setActiveHand(offHand ? Player.Hand.OFF : Player.Hand.MAIN);
+            meta.setActiveHand(offHand ? PlayerHand.OFF : PlayerHand.MAIN);
             meta.setInRiptideSpinAttack(riptideSpinAttack);
             meta.setNotifyAboutChanges(true);
 

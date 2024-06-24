@@ -9,6 +9,7 @@ import net.minestom.server.*;
 import net.minestom.server.collision.*;
 import net.minestom.server.coordinate.Point;
 import net.minestom.server.coordinate.Pos;
+import net.minestom.server.coordinate.PositionUtils;
 import net.minestom.server.coordinate.Vec;
 import net.minestom.server.entity.metadata.EntityMeta;
 import net.minestom.server.entity.metadata.LivingEntityMeta;
@@ -45,15 +46,14 @@ import net.minestom.server.thread.AcquirableSource;
 import net.minestom.server.timer.Schedulable;
 import net.minestom.server.timer.Scheduler;
 import net.minestom.server.timer.TaskSchedule;
+import net.minestom.server.timer.TimeUnit;
 import net.minestom.server.utils.ArrayUtils;
-import net.minestom.server.utils.PacketUtils;
+import net.minestom.server.utils.PacketViewableUtils;
 import net.minestom.server.utils.async.AsyncUtils;
 import net.minestom.server.utils.block.BlockIterator;
 import net.minestom.server.utils.chunk.ChunkCache;
 import net.minestom.server.utils.chunk.ChunkUtils;
 import net.minestom.server.utils.entity.EntityUtils;
-import net.minestom.server.utils.position.PositionUtils;
-import net.minestom.server.utils.time.TimeUnit;
 import net.minestom.server.utils.validate.Check;
 import org.intellij.lang.annotations.MagicConstant;
 import org.jetbrains.annotations.ApiStatus;
@@ -275,7 +275,7 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
      *
      * @param position      the teleport position
      * @param chunks        the chunk indexes to load before teleporting the entity,
-     *                      indexes are from {@link ChunkUtils#getChunkIndex(int, int)},
+     *                      indexes are from {@link net.minestom.server.coordinate.CoordConversionUtils#chunkIndex(int, int)},
      *                      can be null or empty to only load the chunk at {@code position}
      * @param flags         flags used to teleport the entity relatively rather than absolutely
      *                      use {@link RelativeFlags} to see available flags
@@ -476,7 +476,7 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
                 if (passenger != player) passenger.updateOldViewer(player);
             }
         }
-        leashedEntities.forEach(entity -> player.sendPacket(new AttachEntityPacket(entity, null)));
+        leashedEntities.forEach(entity -> player.sendPacket(new AttachEntityPacket(entity.getEntityId(), -1)));
         player.sendPacket(destroyPacketCache);
     }
 
@@ -1006,7 +1006,8 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
     }
 
     protected @NotNull AttachEntityPacket getAttachEntityPacket() {
-        return new AttachEntityPacket(this, leashHolder);
+        Entity leashHolder = this.leashHolder;
+        return new AttachEntityPacket(getEntityId(), leashHolder != null ? leashHolder.getEntityId() : -1);
     }
 
     /**
@@ -1114,7 +1115,7 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
      *
      * @return the entity pose
      */
-    public @NotNull Pose getPose() {
+    public @NotNull EntityPose getPose() {
         return this.entityMeta.getPose();
     }
 
@@ -1126,21 +1127,21 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
      *
      * @param pose the new entity pose
      */
-    public void setPose(@NotNull Pose pose) {
+    public void setPose(@NotNull EntityPose pose) {
         this.entityMeta.setPose(pose);
     }
 
     protected void updatePose() {
         if (entityMeta.isFlyingWithElytra()) {
-            setPose(Pose.FALL_FLYING);
+            setPose(EntityPose.FALL_FLYING);
         } else if (entityMeta.isSwimming()) {
-            setPose(Pose.SWIMMING);
+            setPose(EntityPose.SWIMMING);
         } else if (entityMeta instanceof LivingEntityMeta livingMeta && livingMeta.isInRiptideSpinAttack()) {
-            setPose(Pose.SPIN_ATTACK);
+            setPose(EntityPose.SPIN_ATTACK);
         } else if (entityMeta.isSneaking()) {
-            setPose(Pose.SNEAKING);
+            setPose(EntityPose.SNEAKING);
         } else {
-            setPose(Pose.STANDING);
+            setPose(EntityPose.STANDING);
         }
     }
 
@@ -1235,21 +1236,21 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
         final Chunk chunk = getChunk();
         assert chunk != null;
         if (distanceX > 8 || distanceY > 8 || distanceZ > 8) {
-            PacketUtils.prepareViewablePacket(chunk, new EntityTeleportPacket(getEntityId(), position, isOnGround()), this);
+            PacketViewableUtils.prepareViewablePacket(chunk, new EntityTeleportPacket(getEntityId(), position, isOnGround()), this);
             nextSynchronizationTick = synchronizationTicks + 1;
         } else if (positionChange && viewChange) {
-            PacketUtils.prepareViewablePacket(chunk, EntityPositionAndRotationPacket.getPacket(getEntityId(), position,
+            PacketViewableUtils.prepareViewablePacket(chunk, EntityPositionAndRotationPacket.getPacket(getEntityId(), position,
                     lastSyncedPosition, isOnGround()), this);
             // Fix head rotation
-            PacketUtils.prepareViewablePacket(chunk, new EntityHeadLookPacket(getEntityId(), position.yaw()), this);
+            PacketViewableUtils.prepareViewablePacket(chunk, new EntityHeadLookPacket(getEntityId(), position.yaw()), this);
         } else if (positionChange) {
             // This is a confusing fix for a confusing issue. If rotation is only sent when the entity actually changes, then spawning an entity
             // on the ground causes the entity not to update its rotation correctly. It works fine if the entity is spawned in the air. Very weird.
-            PacketUtils.prepareViewablePacket(chunk, EntityPositionAndRotationPacket.getPacket(getEntityId(), position,
+            PacketViewableUtils.prepareViewablePacket(chunk, EntityPositionAndRotationPacket.getPacket(getEntityId(), position,
                     lastSyncedPosition, onGround), this);
         } else if (viewChange) {
-            PacketUtils.prepareViewablePacket(chunk, new EntityHeadLookPacket(getEntityId(), position.yaw()), this);
-            PacketUtils.prepareViewablePacket(chunk, EntityPositionAndRotationPacket.getPacket(getEntityId(), position,
+            PacketViewableUtils.prepareViewablePacket(chunk, new EntityHeadLookPacket(getEntityId(), position.yaw()), this);
+            PacketViewableUtils.prepareViewablePacket(chunk, EntityPositionAndRotationPacket.getPacket(getEntityId(), position,
                     lastSyncedPosition, isOnGround()), this);
         }
         this.lastSyncedPosition = position;
@@ -1341,7 +1342,7 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
      * @return the entity eye height
      */
     public double getEyeHeight() {
-        return getPose() == Pose.SLEEPING ? 0.2 : entityType.registry().eyeHeight();
+        return getPose() == EntityPose.SLEEPING ? 0.2 : entityType.registry().eyeHeight();
     }
 
     /**
@@ -1525,9 +1526,9 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
     @ApiStatus.Internal
     protected void synchronizePosition() {
         final Pos posCache = this.position;
-        PacketUtils.prepareViewablePacket(currentChunk, new EntityTeleportPacket(getEntityId(), posCache, isOnGround()), this);
+        PacketViewableUtils.prepareViewablePacket(currentChunk, new EntityTeleportPacket(getEntityId(), posCache, isOnGround()), this);
         if (posCache.yaw() != lastSyncedPosition.yaw()) {
-            PacketUtils.prepareViewablePacket(currentChunk, new EntityHeadLookPacket(getEntityId(), position.yaw()), this);
+            PacketViewableUtils.prepareViewablePacket(currentChunk, new EntityHeadLookPacket(getEntityId(), position.yaw()), this);
         }
         nextSynchronizationTick = ticks + synchronizationTicks;
         this.lastSyncedPosition = posCache;
@@ -1746,26 +1747,5 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
     @Override
     public @NotNull Acquirable<? extends Entity> acquirable() {
         return acquirable;
-    }
-
-    public enum Pose {
-        STANDING,
-        FALL_FLYING,
-        SLEEPING,
-        SWIMMING,
-        SPIN_ATTACK,
-        SNEAKING,
-        LONG_JUMPING,
-        DYING,
-        CROAKING,
-        USING_TONGUE,
-        SITTING,
-        ROARING,
-        SNIFFING,
-        EMERGING,
-        DIGGING,
-        SLIDING,
-        SHOOTING,
-        INHALING;
     }
 }

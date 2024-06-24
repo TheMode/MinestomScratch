@@ -4,7 +4,7 @@ import net.kyori.adventure.nbt.BinaryTag;
 import net.kyori.adventure.text.Component;
 import net.minestom.server.MinecraftServer;
 import net.minestom.server.coordinate.Point;
-import net.minestom.server.entity.Entity;
+import net.minestom.server.entity.EntityPose;
 import net.minestom.server.registry.DynamicRegistry;
 import net.minestom.server.registry.ProtocolObject;
 import net.minestom.server.registry.Registries;
@@ -40,6 +40,7 @@ public final class NetworkBuffer {
     public static final Type<Long> VAR_LONG = new NetworkBufferTypeImpl.VarLongType();
     public static final Type<byte[]> RAW_BYTES = new NetworkBufferTypeImpl.RawBytesType();
     public static final Type<String> STRING = new NetworkBufferTypeImpl.StringType();
+    public static final Type<String> STRING_TERMINATED = new NetworkBufferTypeImpl.StringTerminatedType();
     public static final Type<BinaryTag> NBT = new NetworkBufferTypeImpl.NbtType();
     public static final Type<Point> BLOCK_POSITION = new NetworkBufferTypeImpl.BlockPositionType();
     public static final Type<Component> COMPONENT = new NetworkBufferTypeImpl.ComponentType();
@@ -66,7 +67,7 @@ public final class NetworkBuffer {
     public static final Type<@Nullable UUID> OPT_UUID = Optional(UUID);
 
     public static final Type<Direction> DIRECTION = new NetworkBufferTypeImpl.EnumType<>(Direction.class);
-    public static final Type<Entity.Pose> POSE = new NetworkBufferTypeImpl.EnumType<>(Entity.Pose.class);
+    public static final Type<EntityPose> POSE = new NetworkBufferTypeImpl.EnumType<>(EntityPose.class);
 
     // Combinators
 
