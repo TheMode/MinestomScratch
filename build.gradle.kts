@@ -66,18 +66,20 @@ sourceSets {
 
 dependencies {
     // Core dependencies
+    implementation(libs.minestomData)
     api(libs.slf4j)
-    api(project(":lib"))
+    api(libs.jetbrainsAnnotations)
+    api(libs.bundles.adventure)
 
     // Performance/data structures
     implementation(libs.caffeine)
     api(libs.fastutil)
+    api(libs.gson)
     implementation(libs.bundles.flare)
     implementation(libs.jcTools)
 
     // Testing
     testImplementation(libs.bundles.junit)
-    testImplementation(project(":testing"))
 }
 
 tasks {

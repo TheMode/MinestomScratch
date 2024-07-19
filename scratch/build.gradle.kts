@@ -13,7 +13,6 @@ repositories {
 }
 
 dependencies {
-    // TODO: only depend on the `lib` module
     implementation(rootProject)
     api(libs.fastutil)
     implementation(libs.jcTools)
